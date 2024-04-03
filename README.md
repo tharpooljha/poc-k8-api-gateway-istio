@@ -1,4 +1,10 @@
 # K8 Gateway API with istio and anthos
+
+Gateway API is an open source project managed by the SIG-NETWORK community. It is a collection of resources that model service networking in Kubernetes. These resources — GatewayClass, Gateway, HTTPRoute, TCPRoute, Service, etc - aim to evolve Kubernetes service networking through expressive, extensible, and role-oriented interfaces that are implemented by many vendors and have broad industry support.
+
+— https://gateway-api.sigs.k8s.io
+
+
 ```
 PROJECT_ID=FIXME-WITH-YOUR-PROJECT_ID
 CLUSTER=cluster-with-gtw
