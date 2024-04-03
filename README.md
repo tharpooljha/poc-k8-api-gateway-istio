@@ -91,3 +91,109 @@ deployment.apps/asm-gw-istio-asm-gateway
 NAME
 replicaset.apps/asm-gw-istio-asm-gateway-7f7795554
 ```
+
+Create a deployment for our gateway test:
+```deployment.yaml
+kubectl create namespace onlineboutique
+kubectl label namespace onlineboutique istio-injection=enabled
+helm upgrade onlineboutique oci://us-docker.pkg.dev/online-boutique-ci/charts/onlineboutique \
+    --install \
+    -n onlineboutique \
+    --set frontend.externalService=false
+```
+Create a HTTPRoute for our new deployment.
+
+HTTPRoute.yaml
+```
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: frontend
+  namespace: onlineboutique
+spec:
+  parentRefs:
+  - kind: Gateway
+    name: asm-gateway
+    namespace: asm-gateway
+  rules:
+  - backendRefs:
+    - name: frontend
+      port: 80
+Hit the public ip of the K8 Gateway
+
+```terminal
+INGRESS_IP=$(kubectl get gtw asm-gw-gke-asm-gateway \
+    -n asm-gateway \
+    -o=jsonpath="{.status.addresses[0].value}")
+
+echo -e "http://${INGRESS_IP}"
+```
+
+## Clean up
+
+The problem is that our default deployment doesn't have a seccompProfile or dedicated Service Account. No Role, RoleBinding, HPA, etc.
+
+In order to do this, we will need to deploy a istio ingressgateway and service.
+
+```asm-ingressgateway.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asm-ingressgateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      asm: ingressgateway
+  template:
+    metadata:
+      annotations:
+        inject.istio.io/templates: gateway
+      labels:
+        asm: ingressgateway
+    spec:
+      containers:
+      - name: istio-proxy
+        image: auto
+        env:
+        - name: ISTIO_META_UNPRIVILEGED_POD
+          value: "true"
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+          privileged: false
+          readOnlyRootFilesystem: true
+      securityContext:
+        fsGroup: 1337
+        runAsGroup: 1337
+        runAsNonRoot: true
+        runAsUser: 1337
+```
+```service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: asm-ingressgateway
+  namespace: ${INGRESS_NAMESPACE}
+  labels:
+    asm: ingressgateway
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  selector:
+    asm: ingressgateway
+  type: ClusterIP
