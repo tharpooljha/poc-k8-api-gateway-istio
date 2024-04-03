@@ -425,6 +425,6 @@ spec:
 You just secured the deployment behind the new Kubernetes Gateway API via an HTTPS endpoint and Cloud Armor with a WAF and a DDOS protection.
 
 ## More info
-[HTTP to HTTPS redirect](https://cloud.google.com/load-balancing/docs/https/setting-up-http-https-redirect)
-[Configure SSL Policies to secure client-to-load-balancer traffic](https://cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_ssl_policies)
-[Secure load balancer to application traffic using SSL or TLS version](https://medium.com/@mabenoit/the-new-kubernetes-gateway-api-with-istio-and-anthos-service-mesh-asm-9d64c7009cd#:~:text=HTTP%20to%20HTTPS,or%20TLS%20version)
+* [HTTP to HTTPS redirect](https://cloud.google.com/load-balancing/docs/https/setting-up-http-https-redirect)
+* [Configure SSL Policies to secure client-to-load-balancer traffic](https://cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_ssl_policies)
+* [Secure load balancer to application traffic using SSL or TLS version](https://medium.com/@mabenoit/the-new-kubernetes-gateway-api-with-istio-and-anthos-service-mesh-asm-9d64c7009cd#:~:text=HTTP%20to%20HTTPS,or%20TLS%20version)
