@@ -119,6 +119,8 @@ spec:
   - backendRefs:
     - name: frontend
       port: 80
+```
+
 Hit the public ip of the K8 Gateway
 
 ```terminal
