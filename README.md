@@ -181,6 +181,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1337
 ```
+
 ```service.yaml
 apiVersion: v1
 kind: Service
@@ -197,3 +198,231 @@ spec:
   selector:
     asm: ingressgateway
   type: ClusterIP
+```
+
+Create a new GKE K8 Gateway:
+```
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1beta1
+metadata:
+  name: gke-gateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+```
+Create a Istio Gateway pointing to the istio gateway service by using the hostname:
+```
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1beta1
+metadata:
+  name: istio-gateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  gatewayClassName: istio
+  addresses:
+  - value: asm-ingressgateway.${INGRESS_NAMESPACE}.svc.cluster.local
+    type: Hostname
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+```
+Create a HTTPROUTE to bind the 2 gateways:
+
+```
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: asm-ingressgateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  parentRefs:
+  - kind: Gateway
+    name: gke-gateway
+    namespace: ${INGRESS_NAMESPACE}
+  rules:
+  - backendRefs:
+    - kind: Service
+      name: asm-ingressgateway
+      port: 80
+```
+Bind the deployment to the istio gateway Gateway via the HTTPRoute:
+```
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: frontend
+  namespace: onlineboutique
+spec:
+  parentRefs:
+  - kind: Gateway
+    name: istio-gateway
+    namespace: ${INGRESS_NAMESPACE}
+  rules:
+  - backendRefs:
+    - kind: Service
+      name: frontend
+      port: 80
+```
+Finally, test the new gateway:
+```
+INGRESS_IP=$(kubectl get gtw gke-gateway \
+    -n ${INGRESS_NAMESPACE} \
+    -o=jsonpath="{.status.addresses[0].value}")
+
+echo -e "http://${INGRESS_IP}"
+```
+
+## Securing the gateway:
+
+`DNS="frontend-onlineboutique.endpoints.${PROJECT_ID}.cloud.goog"`
+
+```
+swagger: "2.0"
+info:
+  description: "Cloud Endpoints DNS"
+  title: "Cloud Endpoints DNS"
+  version: "1.0.0"
+paths: {}
+host: "${DNS}"
+x-google-endpoints:
+- name: "${DNS}"
+  target: "${INGRESS_IP}"
+```
+
+Deploy it using gcloud:
+
+`gcloud endpoints services deploy dns-spec.yaml`
+
+Add Certs for the DNS:
+```
+openssl genrsa -out ${DNS}.key 2048
+openssl req -x509 \
+    -new \
+    -nodes \
+    -days 365 \
+    -key ${DNS}.key \
+    -out ${DNS}.crt \
+    -subj "/CN=${DNS}"
+```
+Create a Secret with the TLS Cert:
+
+```
+kubectl create secret tls frontend-onlineboutique \
+    -n asm-gateway \
+    --key=${DNS}.key \
+    --cert=${DNS}.crt
+```
+
+Update the Gateway to use the TLS Cert:
+
+```
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1beta1
+metadata:
+  name: gke-gateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: frontend-onlineboutique
+```
+Update our deployment HTTPROUTE:
+```
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: frontend
+  namespace: onlineboutique
+spec:
+  parentRefs:
+  - kind: Gateway
+    name: istio-gateway
+    namespace: ${INGRESS_NAMESPACE}
+  hostnames:
+  - "${DNS}"
+  rules:
+  - backendRefs:
+    - name: frontend
+      port: 80
+```
+
+Create a dedicated HealthCheckPolicy to target the actual Istio ingress gateway proxy’s port on 15021 instead of 443:
+
+```
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: asm-ingressgateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  default:
+    config:
+      httpHealthCheck:
+        port: 15021
+        requestPath: /healthz/ready
+      type: HTTP
+  targetRef:
+    group: ""
+    kind: Service
+    name: asm-ingressgateway
+```
+
+Finally, `echo -e "https://${DNS}"`
+
+## Protect GKE behind Cloud Armor (WAF and DDOS protection)
+
+Create and configure a Cloud Armor policy with a WAF rule and DDOS protection:
+
+```
+gcloud compute security-policies create gke-gateway-security-policy
+
+gcloud compute security-policies update gke-gateway-security-policy \
+    --enable-layer7-ddos-defense
+
+gcloud compute security-policies rules create 1000 \
+    --security-policy gke-gateway-security-policy \
+    --expression "evaluatePreconfiguredExpr('xss-v33-stable')" \
+    --action "deny-403" \
+    --description "XSS attack filtering"
+```
+
+Assign this security poicy to the GKE Gateway:
+
+```
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: asm-ingressgateway
+  namespace: ${INGRESS_NAMESPACE}
+spec:
+  default:
+    securityPolicy: gke-dev-security-policy
+  targetRef:
+    group: ""
+    kind: Service
+    name: asm-ingressgateway
+```
+
+You just secured the deployment behind the new Kubernetes Gateway API via an HTTPS endpoint and Cloud Armor with a WAF and a DDOS protection.
+
+## More info
+[HTTP to HTTPS redirect](https://cloud.google.com/load-balancing/docs/https/setting-up-http-https-redirect)
+[Configure SSL Policies to secure client-to-load-balancer traffic](https://cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_ssl_policies)
+[Secure load balancer to application traffic using SSL or TLS version](https://medium.com/@mabenoit/the-new-kubernetes-gateway-api-with-istio-and-anthos-service-mesh-asm-9d64c7009cd#:~:text=HTTP%20to%20HTTPS,or%20TLS%20version)
